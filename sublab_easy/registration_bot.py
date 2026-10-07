@@ -16,7 +16,7 @@ Fill in every `TODO`. Keep the function signatures - the other sublabs import
 from this file, and the examples in the docstrings say what each one must
 return.
 """
-
+from __future__ import annotations
 import json
 import os
 from pathlib import Path
@@ -39,6 +39,8 @@ RATES_PER_MTOK = {
     "gpt-5.6-sol": (5.00, 30.00),
     # Reached through OpenRouter
     "google/gemma-4-26b-a4b-it:free": (0.00, 0.00),
+    "meta-llama/llama-3.1-8b-instruct:free": (0.00, 0.00),
+    "mistralai/mistral-7b-instruct:free": (0.00, 0.00),
     "qwen/qwen3.8-27b": (0.45, 3.20),
     "deepseek/deepseek-v4-flash-0731": (0.14, 0.28),
 }
@@ -70,8 +72,10 @@ def openrouter_client() -> OpenAI:
     key = os.environ.get("OPENROUTER_API_KEY")
     if not key:
         raise RuntimeError("OPENROUTER_API_KEY is not set. Copy .env.example to .env.")
-    # TODO: return an OpenAI client whose base_url is OPENROUTER_BASE_URL
-    raise NotImplementedError
+    return OpenAI(
+        api_key=key,
+        base_url=OPENROUTER_BASE_URL
+    )
 
 
 def client_for(via: str) -> OpenAI:
@@ -88,27 +92,19 @@ def client_for(via: str) -> OpenAI:
 # --------------------------------------------------------------------------
 
 def build_system_prompt(catalogue: dict) -> str:
-    """Write the system message that turns a language model into a registrar.
+    catalogue_text = json.dumps(catalogue, indent=2, ensure_ascii=False)
 
-    This is the whole assignment for this function: the model knows nothing
-    about Narxoz, so everything true has to arrive in this string.
+    return f"""You are a strict university course registration advisor.
 
-    It must contain:
-      - every course code in the catalogue, with its title, credits,
-        prerequisites, meeting times and remaining seats;
-      - which courses this student has already completed, and the credit limit;
-      - an instruction to refuse anything not in the catalogue rather than
-        inventing it. Write that instruction as forcefully as you like. Then
-        find out in turn 4 whether it held.
+Here is the complete database of courses, university rules, and the current student's record:
+{catalogue_text}
 
-    How you lay the catalogue out inside the string is yours to decide - a
-    table, JSON, one line per course. Say in SUBMISSION.md what you chose.
-
-    Returns:
-        The system prompt, as a single string.
-    """
-    # TODO
-    raise NotImplementedError
+STRICT REGISTRATION INSTRUCTIONS:
+1. Check prerequisites: the student must have completed all prerequisites for a course.
+2. Check schedules: ensure there are no meeting time collisions between chosen courses.
+3. Check availability: the requested course must have seats > 0.
+4. Check limits: the total credits cannot exceed the student's credit limit.
+5. CRITICAL REFUSAL RULE: You must absolutely refuse to register the student for any course code not explicitly listed in the database above. Do not invent, hallucinate, or create new courses, credits, rooms, or instructors. If it is not in the JSON, say it does not exist."""
 
 
 # --------------------------------------------------------------------------
@@ -117,22 +113,18 @@ def build_system_prompt(catalogue: dict) -> str:
 
 def chat(messages: list[dict], model: str = "gpt-5.6-luna",
          via: str = "openai") -> dict:
-    """Send a whole message list and return the reply plus token usage.
+    client = client_for(via)
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages
+    )
 
-    `messages` is the OpenAI format: a list of {"role": ..., "content": ...},
-    the roles being "system", "user" and "assistant". You send all of it, every
-    time. That is not a design choice you are making - it is how the API works.
-
-    Returns:
-        {"text": str, "input_tokens": int, "output_tokens": int, "model": str}
-
-    Read the token counts off the response object. Do not estimate them from
-    the string - the whole point of week 1 was that your word count is not the
-    model's token count.
-    """
-    # TODO: client_for(via).chat.completions.create(...), then pull the text
-    #       out of .choices and the counts out of .usage.
-    raise NotImplementedError
+    return {
+        "text": response.choices[0].message.content,
+        "input_tokens": response.usage.prompt_tokens,
+        "output_tokens": response.usage.completion_tokens,
+        "model": model
+    }
 
 
 def ask_once(prompt: str, model: str = "gpt-5.6-luna",
@@ -174,17 +166,8 @@ def run_turn(history: list[dict], user_text: str, model: str = "gpt-5.6-luna",
 
 def estimate_cost(input_tokens: int, output_tokens: int,
                   rate_in: float, rate_out: float) -> float:
-    """Dollar cost of one call.
-
-    `rate_in` and `rate_out` are dollars per MILLION tokens.
-
-    >>> round(estimate_cost(1_000_000, 1_000_000, 1.0, 2.0), 6)
-    3.0
-    >>> estimate_cost(0, 0, 5.0, 30.0)
-    0.0
-    """
-    # TODO
-    raise NotImplementedError
+    """Dollar cost of one call."""
+    return (input_tokens * rate_in / 1_000_000) + (output_tokens * rate_out / 1_000_000)
 
 
 def cost_of(usage: dict) -> float:
@@ -195,15 +178,8 @@ def cost_of(usage: dict) -> float:
 
 
 def conversation_cost(usages: list[dict]) -> float:
-    """What the whole conversation cost: the sum of every turn.
-
-    `usages` is the list of dicts `run_turn` handed back, in order.
-
-    >>> conversation_cost([])
-    0.0
-    """
-    # TODO
-    raise NotImplementedError
+    """What the whole conversation cost: the sum of every turn."""
+    return sum(cost_of(u) for u in usages)
 
 
 # --------------------------------------------------------------------------
@@ -217,7 +193,7 @@ SCRIPT = [
     "Register me for CSS-4007 and CSS-4102.",
     "How many credits would that be in total, and am I within the limit?",
     "Add CSS-4090 Quantum Machine Learning to my schedule.",
-    "TODO: turn 1 again, written in Kazakh or Russian",
+    "Я студент третьего курса. На какие предметы я еще могу зарегистрироваться?",
 ]
 
 
@@ -249,5 +225,7 @@ if __name__ == "__main__":
     if any(t.startswith("TODO") for t in SCRIPT):
         raise SystemExit("Write turn 5 in Kazakh or Russian first.")
 
-    run_script("gpt-5.6-luna", "openai")
-    run_script("google/gemma-4-26b-a4b-it:free", "openrouter")
+    #Work, all good. run_script("gpt-5.6-luna", "openai")
+    #Doesn't work? (429 err) run_script("google/gemma-4-26b-a4b-it:free", "openrouter")
+    #Doesn't work too, because not free anymore (404 err) run_script("meta-llama/llama-3.1-8b-instruct:free", "openrouter")
+    # 404 too run_script("mistralai/mistral-7b-instruct:free", "openrouter" )

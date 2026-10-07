@@ -6,7 +6,7 @@ charged you for the attempt.
 
 Fill in every `TODO`. Keep the function signatures.
 """
-
+from __future__ import annotations
 import json
 import os
 import sys
@@ -36,62 +36,58 @@ def load_sentences() -> list[dict]:
 
 
 def build_prompt(corrupted: str) -> str:
-    """Ask for a corrected sentence AND a list of the changes made.
+    return f"""You are an expert editor for the Kazakh language.
+The following Kazakh text contains deliberate errors. These may include wrong letters (e.g., Russian Cyrillic lookalikes), letters from the wrong alphabet (e.g., Latin homoglyphs), missing hyphens, joined words, or doubled letters.
 
-    Requirements:
-      - state that the text is Kazakh and may contain wrong letters, joined
-        words, or letters from the wrong alphabet;
-      - demand exactly this JSON and nothing else:
-            {"corrected": "...", "changes": ["...", "..."]}
-      - do not include the correct answer in the prompt. You are testing the
-        model, not your own typing.
+Text to correct:
+{corrupted}
 
-    Asking for a fixed shape instead of prose is how you make six models
-    comparable. Week 3 turns this into a topic.
-    """
-    # TODO
-    raise NotImplementedError
+You must return EXACTLY this JSON structure and nothing else:
+{{"corrected": "the fully corrected string", "changes": ["description of change 1", "description of change 2"]}}
+"""
 
 
 def parse_response(text: str) -> dict:
-    """Pull {"corrected": str, "changes": list} out of the model's reply.
+    try:
+        #delim
+        start_idx = text.find('{')
+        end_idx = text.rfind('}')
 
-    Models wrap JSON in prose, or in ```json fences, more often than you would
-    like. Be forgiving: find the JSON, parse it, and raise ValueError with the
-    offending text if you truly cannot.
-    """
-    # TODO
-    raise NotImplementedError
+        if start_idx == -1 or end_idx == -1:
+            raise ValueError(f"No JSON object found in response: {text}")
+
+        json_str = text[start_idx: end_idx + 1]
+        return json.loads(json_str)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Failed to decode JSON: {text}") from e
 
 
 def correct_with(model: str, corrupted: str, via: str) -> dict:
-    """Send one sentence to one model.
+    prompt = build_prompt(corrupted)
+    reply = ask_once(prompt, model=model, via=via)
 
-    Returns:
-        {"corrected": str, "changes": list, "input_tokens": int,
-         "output_tokens": int, "model": str}
+    parsed = parse_response(reply["text"])
 
-    `via` is "openai" or "openrouter" and goes straight through to
-    `ask_once` from sublab_easy - there is no conversation here, just one
-    prompt and one reply, eight times per model.
-    """
-    # TODO
-    raise NotImplementedError
+    return {
+        "corrected": parsed.get("corrected", ""),
+        "changes": parsed.get("changes", []),
+        "input_tokens": reply["input_tokens"],
+        "output_tokens": reply["output_tokens"],
+        "model": reply["model"]
+    }
 
 
 def score_correction(returned: str, expected: str) -> dict:
-    """Compare a model's output against the published original.
+    exact = (returned == expected)
 
-    Returns {"exact": bool, "char_diff": int} where char_diff is the number of
-    differing characters (a simple positional comparison is enough; count the
-    length difference too).
+    # Count to the end of the shortest
+    char_diff = sum(1 for a, b in zip(returned, expected) if a != b)
+    char_diff += abs(len(returned) - len(expected))
 
-    READ THIS: `exact` is a signal, not a grade. Good Kazakh that differs from
-    the original still counts as a correction. Your written analysis is where
-    you make that call.
-    """
-    # TODO
-    raise NotImplementedError
+    return {
+        "exact": exact,
+        "char_diff": char_diff
+    }
 
 
 def run_all() -> list[dict]:
